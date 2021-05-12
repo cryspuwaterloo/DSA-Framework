@@ -12,6 +12,8 @@ import android.os.RemoteException;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 import android.util.Log;
 
+import java.util.ArrayList;
+
 import ca.uwaterloo.crysp.sharingmodeservice.ISharingModeServiceInterface;
 
 public class DSAClientService extends Service {
@@ -26,12 +28,20 @@ public class DSAClientService extends Service {
     private BroadcastReceiver broadcastReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            int status = intent.getIntExtra(DSAConstant.EXTRA_FIELD_STATUS,
-                    DSAConstant.SHARING_STATUS_NO_SHARING);
-            Log.d(TAG, "Receive DSA broadcast: " + status);
-            sharingStatus = status;
-            // Local broadcasting
-            broadcastResultLocally(status);
+            int actionType = intent.getIntExtra("actionType", 0);
+            if (actionType == 0) {
+                int status = intent.getIntExtra(DSAConstant.EXTRA_FIELD_STATUS,
+                        DSAConstant.SHARING_STATUS_NO_SHARING);
+                Log.d(TAG, "Receive DSA broadcast: " + status);
+                sharingStatus = status;
+                // Local broadcasting
+                broadcastResultLocally(status);
+            } else if (actionType == 1) {
+                Intent bIntent = new Intent();
+                bIntent.setAction(DSAConstant.ACTION_HANDLE_ESCAPE);
+                LocalBroadcastManager.getInstance(getApplicationContext()).sendBroadcast(bIntent);
+                Log.d(TAG, "Local broadcast: client handle escape");
+            }
         }
     };
 
@@ -53,7 +63,7 @@ public class DSAClientService extends Service {
                 int result = intent.getIntExtra(DSAConstant.EXTRA_FIELD_IA_RESULT, -1);
                 double score = intent.getDoubleExtra(DSAConstant.EXTRA_FIELD_IA_SCORE, -1);
                 try {
-                    smsInterface.sendIAResult(result, score);
+                    smsInterface. sendIAResult(result, score);
                 } catch (RemoteException e) {
                     e.printStackTrace();
                 }
@@ -66,6 +76,24 @@ public class DSAClientService extends Service {
                     Log.e(TAG, "Not connected");
                 }
 
+            }
+            if(intent.getAction().equals(DSAConstant.ACTION_UPDATE_CLIENT_STATUS)) {
+                // Send client status confirmation back to the sharing service
+                int statusConfirmation = intent.getIntExtra(DSAConstant.EXTRA_FIELD_CLIENT_STATUS, -1);
+                try {
+                    smsInterface.sendClientStatus(statusConfirmation);
+                } catch (RemoteException e) {
+                    e.printStackTrace();
+                }
+            }
+            if(intent.getAction().equals(DSAConstant.ACTION_UPDATE_WHITELIST)&& smsInterface != null) {
+                // Send client status confirmation back to the sharing service
+                ArrayList<String> whitelist = intent.getStringArrayListExtra(DSAConstant.EXTRA_FIELD_WHITELIST);
+                try {
+                    smsInterface.sendWhitelist(whitelist);
+                } catch (RemoteException e) {
+                    e.printStackTrace();
+                }
             }
         }
         return START_NOT_STICKY;

@@ -7,10 +7,16 @@ public class DSAConstant {
     public static final String EXTRA_FIELD_STATUS = "SharingStatus";
     public static final String EXTRA_FIELD_IA_RESULT = "IAResult";
     public static final String EXTRA_FIELD_IA_SCORE = "IAScore";
+    // this holds client's status confirmation
+    public static final String EXTRA_FIELD_CLIENT_STATUS = "SharingStatus";
+    public static final String EXTRA_FIELD_WHITELIST = "Whitelist";
 
     public static final String ACTION_ACQUIRE_SHARING_STATUS = "Acquire sharing status";
     public static final String ACTION_INITIALIZE_SHARING_STATUS = "Initialize status";
     public static final String ACTION_UPDATE_IA_RESULT = "Update IA result";
+    public static final String ACTION_UPDATE_CLIENT_STATUS = "Update client's status confirmation";
+    public static final String ACTION_HANDLE_ESCAPE = "notify the client to handle escape action";
+    public static final String ACTION_UPDATE_WHITELIST = "Update client's whitelist";
 
 
     public static final int SHARING_STATUS_UNAVAILABLE = 0;

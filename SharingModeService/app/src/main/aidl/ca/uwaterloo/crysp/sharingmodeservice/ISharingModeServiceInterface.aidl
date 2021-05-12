@@ -11,4 +11,10 @@ interface ISharingModeServiceInterface {
     int getSharingStatus();
 
     int sendIAResult(int result, double score);
+
+    int sendClientStatus(int status);
+
+    int clientHandleEscape();
+
+    int sendWhitelist(inout List<String> whitelist);
 }

@@ -1,18 +1,23 @@
 package ca.uwaterloo.crysp.libdsaclient;
 
+import android.app.ActivityManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 
 import androidx.databinding.BindingAdapter;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 import androidx.appcompat.app.AppCompatActivity;
 import android.util.Log;
+import android.util.Pair;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Toast;
 
 import java.io.File;
@@ -20,8 +25,13 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.lang.reflect.Array;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.regex.Pattern;
 
 import ca.uwaterloo.crysp.libdsaclient.ia.TouchFeatures;
 import ca.uwaterloo.crysp.libdsaclient.ia.TrainingSet;
@@ -46,10 +56,17 @@ public class SecureActivity extends AppCompatActivity {
     private boolean topActivity = false;
 
 
+    // HashMap to keep track of view's original visibility and if enabled
+    HashMap<View, Pair<Integer, Boolean>> mDisabledViewMap = new HashMap<View, Pair<Integer, Boolean>>();
+    HashMap<View, Pair<Integer, Boolean>> mGoneViewMap = new HashMap<View, Pair<Integer, Boolean>>();
+    HashMap<View, Pair<Integer, Boolean>> mInvisibleViewMap = new HashMap<View, Pair<Integer, Boolean>>();
     // utility related variable
     // auto hidden view list
     private List<View> autoHiddenViews;
     private List<View> autoDisableViews;
+
+    // escape white list
+    private ArrayList<String> mWhiteList = new ArrayList<>();
 
 
     private BroadcastReceiver broadcastReceiver = new BroadcastReceiver() {
@@ -104,40 +121,115 @@ public class SecureActivity extends AppCompatActivity {
         }
     };
 
+    private BroadcastReceiver escapeHandler = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            Log.d(BASE_TAG, "Localbroadcast received");
+            if (intent != null && intent.getAction() != null) {
+                if (intent.getAction().equals(DSAConstant.ACTION_HANDLE_ESCAPE)) {
+                    if (sharing) {
+                        ActivityManager activityManager = (ActivityManager) getApplicationContext()
+                                .getSystemService(Context.ACTIVITY_SERVICE);
+                        activityManager.moveTaskToFront(getTaskId(), 0);
+                    }
+                }
+            }
+        }
+    };
+
     public void onSharingStatusChanged(boolean status) {
         sharing = status;
-        Log.d(BASE_TAG, "Sharing status changed: " + status);
         if(status) {
             disableViews();
             hideViews();
+            makeInvisViews();
         } else {
             recoverViews();
         }
+        int statusConfirmation = 0;
+        if(status) {
+            statusConfirmation = 1;
+        }
+        // send client status confirmation back to the sharing service
+        Intent intent = new Intent(this, DSAClientService.class);
+        intent.setAction(DSAConstant.ACTION_UPDATE_CLIENT_STATUS);
+        intent.putExtra(DSAConstant.EXTRA_FIELD_CLIENT_STATUS,
+                statusConfirmation);
+        startService(intent);
     }
 
 
     public void hideViews() {
-        for(View view: autoHiddenViews) {
-            view.setVisibility(View.GONE);
+        for(View view: mGoneViewMap.keySet()) {
+            ((View) view.getParent()).setVisibility(View.GONE);
         }
     }
 
     public void disableViews() {
-        for(View view: autoDisableViews) {
+        for(View view: mDisabledViewMap.keySet()) {
             view.setEnabled(false);
+            ((View) view.getParent()).setAlpha(0.25f);
+        }
+    }
+
+    public void makeInvisViews() {
+        for(View view: mInvisibleViewMap.keySet()) {
+            ((View) view.getParent()).setVisibility(View.INVISIBLE);
         }
     }
 
     public void recoverViews() {
-        for(View view: autoHiddenViews) {
-            view.setVisibility(View.GONE);
+        // recover the visibility and enabled to original states
+        for(View view: mGoneViewMap.keySet()) {
+            ((View) view.getParent()).setVisibility(mGoneViewMap.get(view).first);
         }
 
-        for(View view: autoDisableViews) {
-            view.setEnabled(true);
+        for(View view: mDisabledViewMap.keySet()) {
+            ((View) view.getParent()).setVisibility(mDisabledViewMap.get(view).first);
+            view.setEnabled(mDisabledViewMap.get(view).second);
+            ((View) view.getParent()).setAlpha(1);
+        }
+
+        for(View view: mInvisibleViewMap.keySet()) {
+            ((View) view.getParent()).setVisibility(mInvisibleViewMap.get(view).first);
         }
     }
 
+    protected void checkModeAndSetVisibiliity() {
+        if(getSharingState()){
+            disableViews(); // grey out
+            hideViews(); // hide
+            makeInvisViews(); // disappear and leave blank space
+        }
+    }
+
+    protected static ArrayList<View> getViewsByTag(ViewGroup root, String tag){
+        ArrayList<View> views = new ArrayList<View>();
+        final int childCount = root.getChildCount();
+        for (int i = 0; i < childCount; i++) {
+            final View child = root.getChildAt(i);
+            if (child instanceof ViewGroup) {
+                views.addAll(getViewsByTag((ViewGroup) child, tag));
+            }
+
+            //check for null tag
+            if (child.getTag() != null) {
+                final String tagObj = child.getTag().toString();
+                String[] strArray= tagObj.split(Pattern.quote("||"));
+                boolean contains = false;
+                for(String s : strArray) {
+                    if (s.equals(tag)) {
+                        contains = true;
+                        break;
+                    }
+                }
+                if (tagObj != null && contains) {
+                    views.add(child);
+                }
+            }
+        }
+        return views;
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -154,6 +246,8 @@ public class SecureActivity extends AppCompatActivity {
         // DSA local broadcast
         LocalBroadcastManager.getInstance(this).registerReceiver(broadcastReceiver,
                 new IntentFilter(DSAConstant.ACTION_ACQUIRE_SHARING_STATUS));
+        LocalBroadcastManager.getInstance(this).registerReceiver(escapeHandler,
+                new IntentFilter(DSAConstant.ACTION_HANDLE_ESCAPE));
     }
 
     private void updateMode(int mode) {
@@ -210,6 +304,52 @@ public class SecureActivity extends AppCompatActivity {
         Intent initIntent = new Intent(this, DSAClientService.class);
         initIntent.setAction(DSAConstant.ACTION_INITIALIZE_SHARING_STATUS);
         startService(initIntent);
+
+        // get all views with visibility tag
+        ArrayList<View> disabledViews = getViewsByTag(findViewById(android.R.id.content), "disabled");
+        ArrayList<View> goneViews = getViewsByTag(findViewById(android.R.id.content), "gone");
+        ArrayList<View> invisibleViews = getViewsByTag(findViewById(android.R.id.content), "invisible");
+        // populate viewMap
+        for (View v : disabledViews) { // views will be greyed out
+            View parent = ((View) v.getParent());
+            Pair<Integer, Boolean> viewPair = new Pair<>(parent.getVisibility(), parent.isEnabled());
+            mDisabledViewMap.put(v, viewPair);
+        }
+        for (View v : goneViews) { // views will be gone dynamically to the layout
+            View parent = ((View) v.getParent());
+            Pair<Integer, Boolean> viewPair = new Pair<>(parent.getVisibility(), parent.isEnabled());
+            mGoneViewMap.put(v, viewPair);
+        }
+        for (View v : invisibleViews) { // views will disappear and layout will leave blank space
+            View parent = ((View) v.getParent());
+            Pair<Integer, Boolean> viewPair = new Pair<>(parent.getVisibility(), parent.isEnabled());
+            mInvisibleViewMap.put(v, viewPair);
+        }
+        checkModeAndSetVisibiliity();
+
+        // get white list apps
+        try {
+            ApplicationInfo ai = getPackageManager().getApplicationInfo(this.getPackageName(), PackageManager.GET_META_DATA);
+            Bundle bundle = ai.metaData;
+            String wlString = bundle.getString("whiteList");
+            // populate the white list with metadata
+            String[] whiteList= wlString.split(Pattern.quote("||"));
+
+            // send the whitelist to server
+            Intent wlIntent = new Intent(this, DSAClientService.class);
+            wlIntent.setAction(DSAConstant.ACTION_UPDATE_WHITELIST);
+            //convert to arraylist
+            for(String str:whiteList) {
+                mWhiteList.add(str);
+            }
+            wlIntent.putStringArrayListExtra(DSAConstant.EXTRA_FIELD_WHITELIST,
+                    mWhiteList);
+            startService(wlIntent);
+        } catch (PackageManager.NameNotFoundException e) {
+            Log.e(BASE_TAG, "Failed to load meta-data, NameNotFound: " + e.getMessage());
+        } catch (NullPointerException e) {
+            Log.e(BASE_TAG, "Failed to load meta-data, NullPointer: " + e.getMessage());
+        }
     }
 
     @Override

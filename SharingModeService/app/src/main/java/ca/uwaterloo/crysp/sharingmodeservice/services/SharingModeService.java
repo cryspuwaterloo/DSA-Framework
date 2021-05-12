@@ -15,6 +15,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.ServiceConnection;
 import android.hardware.biometrics.BiometricPrompt;
 import android.os.Build;
 import android.os.IBinder;
@@ -29,9 +30,13 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 
 import java.security.Key;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -57,6 +62,7 @@ public class SharingModeService extends Service {
     private static int FOREGROUND_ID = 2023;
     private static boolean locking = false;
     private static boolean authenticating = false;
+    private static int clientSharing = 0;
 
     public static final String ACTION_SET_LOCK_MODE = "SET_LOCK_MODE";
     public static final String ACTION_IMPLICIT_LOCK_MODE = "IMPLICIT_LOCK_MODE";
@@ -72,7 +78,6 @@ public class SharingModeService extends Service {
     public static final String ACTION_RETURN_DEVICE = "RETURN DEVICE";
     public static final String ACTION_CONFIRM_RETURN = "CONFIRM RETURN";
 
-
     private NotificationManager notificationManager;
     private NotificationCompat.Builder notificationBuilder;
     private BroadcastReceiver mReceiver;
@@ -87,6 +92,11 @@ public class SharingModeService extends Service {
 
     private static String currentLockApp;
     private int currentFilter = 0;
+    private HashMap<String, Set<String>> mWhitelistMap = new HashMap<>();
+    private HashSet<String> mVisitedAppSet = new HashSet<>();
+
+    private ISharingModeServiceInterface smsInterface = null;
+    private SharingServiceConnection conn = new SharingServiceConnection();
 
     public SharingModeService() {
     }
@@ -107,11 +117,36 @@ public class SharingModeService extends Service {
                 ssm.updateIAResult(getBaseContext(), result);
                 return 0;
             }
+
+            public int sendClientStatus(int status) throws RemoteException {
+                // update the service with the client status
+                clientSharing = status;
+                return 0;
+            }
+
+            public int clientHandleEscape() throws RemoteException {
+                // notify the client to handle escape actions
+                return 0;
+            }
+
+            public int sendWhitelist(List<String> whitelist) throws RemoteException {
+                // notify the client to handle escape actions
+                if(mWhitelistMap.get(currentLockApp)==null) { // created set for the currentapp if doesn't exist
+                    HashSet<String> appSet = new HashSet<>();
+                    mWhitelistMap.put(currentLockApp, appSet);
+                }
+                // add to currentapp whitelist
+                for (String app : whitelist) {
+                    mWhitelistMap.get(currentLockApp).add(app);
+                }
+                return 0;
+            }
         };
     }
 
     public void lockApp(String packageName, boolean isExplicit) {
         currentLockApp = packageName;
+        Log.d("mytest", "lock app " +currentLockApp);
         locking = true;
         currentFilter = notificationManager.getCurrentInterruptionFilter();
         notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE);
@@ -145,6 +180,8 @@ public class SharingModeService extends Service {
 
                     ssm.setSharingStatus(SharingStatusManager.SHARING_STATUS_SHARING_CONFIRMED);
                     broadcastSharingStatus(SharingStatusManager.SHARING_STATUS_SHARING_CONFIRMED);
+                    // catch lock
+                    mVisitedAppSet.add(currentLockApp);
                     break;
                 case ACTION_CONFIRM_SHARING:
                     ssm.setSharingStatus(SharingStatusManager.SHARING_STATUS_SHARING_CONFIRMED);
@@ -167,7 +204,10 @@ public class SharingModeService extends Service {
                     Log.e(TAG, "CATCH YOU");
                     locking = true;
                     authenticating = false;
-                    returnToLockedApp();
+                    // Apps with the client lib will handle this implicitly on the client side
+                    if(clientSharing == 0) { // otherwise, service handles it
+                        returnToLockedApp();
+                    }
                     break;
                 case RESULT_AUTHENTICATION_SUCCESS:
                     locking = false;
@@ -182,6 +222,8 @@ public class SharingModeService extends Service {
                         unregisterReceiver(unlockReceiver);
                         unLockReceiverEnabled = false;
                     }
+                    // catch unlock
+                    mVisitedAppSet.clear();
                     break;
                 case RESULT_IMPLICIT_AUTHENTICATION_SUCCESS:
                     locking = false;
@@ -196,7 +238,10 @@ public class SharingModeService extends Service {
                 case RESULT_AUTHENTICATION_FAILURE:
                     locking = true;
                     authenticating = false;
-                    returnToLockedApp();
+                    // Apps with the client lib will handle this implicitly on the client side
+                    if(clientSharing == 0) { // otherwise, service handles it
+                        returnToLockedApp();
+                    }
                     break;
                 case RESULT_IMPLICIT_AUTHENTICATION_FAILURE:
                     locking = true;
@@ -269,9 +314,26 @@ public class SharingModeService extends Service {
                 }
                 if(locking && (!runningApp.equals(currentLockApp)
                        && !(runningApp.equals(SETTING_PACKAGE) && authenticating))) {
-                    // showHomeScreen();
-                    Log.d(TAG, "Attempt to use other apps");
-                    returnToLockedApp();
+                    // handle attempt to escape
+                    HashSet<String> temp1 = new HashSet<>();
+                    HashSet<String> temp2 = new HashSet<>();
+                    temp1.add("com.android.mms");
+                    mWhitelistMap.put("com.android.fileexplorer", temp1);
+                    temp2.add("com.android.mms");
+                    mWhitelistMap.put("us.koller.cameraroll.debug", temp2);
+                    if((mWhitelistMap.get(currentLockApp)!=null && mWhitelistMap.get(currentLockApp).contains(runningApp)) || runningApp.equals("android")) {
+                        // the next app is in whitelist or is a sharing dialog. do not block
+                        mVisitedAppSet.add(runningApp);
+                    }  else {
+                        if(!mVisitedAppSet.contains(runningApp)) {
+                            Log.d(TAG, "Attempt to leave current app");
+                            if(clientSharing == 0) {
+                                returnToLockedApp(); //server handled
+                            } else {
+                                broadcastEscapeCatched(); // client handled
+                            }
+                        }
+                    }
                 }
 
 
@@ -353,6 +415,7 @@ public class SharingModeService extends Service {
     }
 
     public void returnToLockedApp () {
+        Log.d("mytest", "returetoloackedapp " + currentLockApp);
         Intent i = getPackageManager()
                 .getLaunchIntentForPackage(currentLockApp)
                 .setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -424,9 +487,30 @@ public class SharingModeService extends Service {
     public void broadcastSharingStatus(int status) {
         Intent intent = new Intent();
         intent.setAction(getPackageName());
+        intent.putExtra("actionType", 0);
         intent.putExtra("SharingStatus", status);
         sendBroadcast(intent);
         Log.d(TAG, "Broadcast sharing status:" + getPackageName() + "," + status);
+    }
+
+    public void broadcastEscapeCatched() {
+        Intent intent = new Intent();
+        intent.setAction(getPackageName());
+        intent.putExtra("actionType", 1);
+        sendBroadcast(intent);
+        Log.d(TAG, "Broadcast client handle escape");
+    }
+
+    private class SharingServiceConnection implements ServiceConnection {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            smsInterface = ISharingModeServiceInterface.Stub.asInterface(service);
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            Log.d(TAG, "Service disconnected");
+        }
     }
 
 }
