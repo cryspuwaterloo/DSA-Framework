@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="ca.uwaterloo.crysp.libdsaclient">
+    <application>
+        <service android:name="ca.uwaterloo.crysp.libdsaclient.dsa.DSAClientService"
+            android:enabled="true"
+            android:exported="false" />
+        <receiver android:name="ca.uwaterloo.crysp.libdsaclient.dsa.DSAClientService"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="ca.uwaterloo.crysp.sharingmodeservice">
+                </action>
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>
