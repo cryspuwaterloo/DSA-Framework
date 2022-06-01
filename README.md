@@ -2,7 +2,7 @@
 Enable Device Sharing Awareness for Android Smartphones and Apps
 
 # DSA Dataset
-Dataset link: [available soon](https://github.com/cryspuwaterloo/DSA-Framework)
+Dataset link: [Google Drive](https://drive.google.com/file/d/1-a3W_XmUw8uKymLW97hPEaMpmBWT9Z-r/view?usp=sharing)
 
 This dataset was collected in 2019-2020 by Jiayi Chen, and was used in "Sharing without Scaring: Enabling Smartphones to Become Aware of Temporary Sharing" co-authored by Jiayi Chen, Urs Hengartner, and Hassan Khan.
 
